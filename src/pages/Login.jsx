@@ -44,7 +44,16 @@ const Login = () => {
       navigate('/dashboard');
     } catch (error) {
       console.error('Google login error:', error);
-      setError(error.message || 'Failed to log in with Google');
+
+      // Check if it's the unauthorized domain error
+      if (error.message && error.message.includes('domain is not authorized')) {
+        setError(
+          'This domain is not authorized for Google authentication. Please use email/password login for now. ' +
+          'To fix this permanently, the domain needs to be added to Firebase authorized domains list.'
+        );
+      } else {
+        setError(error.message || 'Failed to log in with Google');
+      }
     } finally {
       setLoading(false);
     }
