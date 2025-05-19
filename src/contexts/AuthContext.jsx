@@ -58,25 +58,67 @@ export function AuthProvider({ children }) {
   const login = async (email, password) => {
     try {
       setLoading(true);
+      console.log('Attempting to login with email:', email);
 
-      // Call backend to login user
-      const response = await authAPI.login({ email, password });
+      try {
+        // Call backend to login user
+        console.log('Calling backend login API...');
+        const response = await authAPI.login({ email, password });
+        console.log('Login API response:', response.data);
 
-      // Get the custom token from the response
-      const customToken = response.data.token;
+        // Get the custom token from the response
+        const customToken = response.data.token;
+        if (!customToken) {
+          console.error('No token received from backend');
+          throw new Error('No authentication token received from server');
+        }
 
-      // Sign in with the custom token
-      await signInWithCustomToken(auth, customToken);
+        console.log('Received token from backend, signing in with Firebase...');
+        // Sign in with the custom token
+        await signInWithCustomToken(auth, customToken);
+        console.log('Firebase sign in successful');
 
-      // Save token to localStorage
-      localStorage.setItem('token', customToken);
-      setToken(customToken);
+        // Save token to localStorage
+        localStorage.setItem('token', customToken);
+        setToken(customToken);
 
-      setCurrentUser(response.data.user);
-      toast.success('Logged in successfully!');
-      return response.data.user;
+        // Set current user
+        const userData = response.data.user;
+        console.log('Setting current user:', userData);
+        setCurrentUser(userData);
+
+        toast.success('Logged in successfully!');
+        return userData;
+      } catch (backendError) {
+        console.error('Backend login failed, trying direct Firebase login:', backendError);
+
+        // Try direct Firebase authentication as fallback
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        const user = userCredential.user;
+
+        // Get ID token from Firebase
+        const idToken = await user.getIdToken(true);
+        console.log('Got ID token directly from Firebase');
+
+        // Save token to localStorage
+        localStorage.setItem('token', idToken);
+        setToken(idToken);
+
+        // Create user object
+        const userData = {
+          uid: user.uid,
+          email: user.email,
+          name: user.displayName || email.split('@')[0],
+          emailVerified: user.emailVerified
+        };
+
+        setCurrentUser(userData);
+        toast.success('Logged in successfully (direct Firebase)');
+        return userData;
+      }
     } catch (error) {
       console.error('Login error:', error);
+      console.error('Error details:', error.response?.data);
       toast.error(error.response?.data?.message || error.message || 'Failed to login');
       throw error;
     } finally {
