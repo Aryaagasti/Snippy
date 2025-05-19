@@ -6,6 +6,8 @@ import {
   signOut,
   GoogleAuthProvider,
   signInWithPopup,
+  signInWithRedirect,
+  getRedirectResult,
   sendPasswordResetEmail,
   onAuthStateChanged
 } from 'firebase/auth';
@@ -131,47 +133,110 @@ export function AuthProvider({ children }) {
     try {
       setLoading(true);
 
+      // First, check if we're returning from a redirect
+      try {
+        // Get redirect result (if any)
+        const result = await getRedirectResult(auth);
+
+        if (result && result.user) {
+          console.log('Returned from Google redirect, processing login');
+
+          // Get Firebase ID token from the user
+          const idToken = await result.user.getIdToken(true);
+          console.log('Got ID token from Firebase after redirect');
+
+          // Use the Firebase ID token directly
+          localStorage.setItem('token', idToken);
+          setToken(idToken);
+
+          // Create a user object
+          const user = result.user;
+          const userObj = {
+            uid: user.uid,
+            email: user.email,
+            name: user.displayName || 'Google User',
+            photoURL: user.photoURL,
+            emailVerified: user.emailVerified
+          };
+
+          setCurrentUser(userObj);
+
+          try {
+            // Call backend to register the Google login
+            await authAPI.googleAuth(idToken);
+            toast.success('Logged in with Google successfully!');
+          } catch (backendError) {
+            console.error('Backend Google auth error:', backendError);
+            toast.success('Logged in with Google (some features may be limited)');
+          }
+
+          return userObj;
+        }
+      } catch (redirectError) {
+        console.error('Error processing redirect result:', redirectError);
+      }
+
+      // If we're not returning from a redirect, start a new sign-in flow
+      console.log('Starting new Google sign-in flow');
+
       // Configure Google provider
       const provider = new GoogleAuthProvider();
       provider.addScope('email');
       provider.addScope('profile');
 
-      // Sign in with popup
-      const result = await signInWithPopup(auth, provider);
-      console.log('Google sign in successful');
-
-      // Get Firebase ID token from the user
-      const idToken = await result.user.getIdToken(true);
-      console.log('Got ID token from Firebase');
-
-      // IMPORTANT: Use the Firebase ID token directly for all API calls
-      // This ensures we're using a token that the backend can verify
-      localStorage.setItem('token', idToken);
-      setToken(idToken);
-
-      // Create a user object from the Firebase user
-      const user = result.user;
-      const userObj = {
-        uid: user.uid,
-        email: user.email,
-        name: user.displayName || 'Google User',
-        photoURL: user.photoURL,
-        emailVerified: user.emailVerified
-      };
-
-      setCurrentUser(userObj);
-
       try {
-        // Call backend to register the Google login (but we already have the token)
-        await authAPI.googleAuth(idToken);
-        toast.success('Logged in with Google successfully!');
-      } catch (backendError) {
-        console.error('Backend Google auth error:', backendError);
-        // We can still continue since we have the Firebase token
-        toast.success('Logged in with Google (some features may be limited)');
-      }
+        // Try popup first (works on most browsers)
+        console.log('Attempting popup sign-in');
+        const result = await signInWithPopup(auth, provider);
+        console.log('Google popup sign-in successful');
 
-      return userObj;
+        // Get Firebase ID token
+        const idToken = await result.user.getIdToken(true);
+        console.log('Got ID token from Firebase');
+
+        // Use the Firebase ID token directly
+        localStorage.setItem('token', idToken);
+        setToken(idToken);
+
+        // Create a user object
+        const user = result.user;
+        const userObj = {
+          uid: user.uid,
+          email: user.email,
+          name: user.displayName || 'Google User',
+          photoURL: user.photoURL,
+          emailVerified: user.emailVerified
+        };
+
+        setCurrentUser(userObj);
+
+        try {
+          // Call backend to register the Google login
+          await authAPI.googleAuth(idToken);
+          toast.success('Logged in with Google successfully!');
+        } catch (backendError) {
+          console.error('Backend Google auth error:', backendError);
+          toast.success('Logged in with Google (some features may be limited)');
+        }
+
+        return userObj;
+      } catch (popupError) {
+        // If popup fails (e.g., due to unauthorized domain), try redirect
+        console.error('Popup sign-in failed, trying redirect:', popupError);
+
+        if (popupError.code === 'auth/unauthorized-domain') {
+          toast.error('This domain is not authorized for authentication. Please add it to your Firebase project.');
+          toast.info('Trying redirect authentication instead...');
+
+          // Use redirect method instead
+          await signInWithRedirect(auth, provider);
+          // The page will reload and we'll handle the result above
+          return null;
+        }
+
+        // If it's not an unauthorized domain error, rethrow
+        throw popupError;
+      }
     } catch (error) {
       console.error('Google login error:', error);
       toast.error(error.response?.data?.message || error.message || 'Failed to login with Google');
@@ -224,8 +289,53 @@ export function AuthProvider({ children }) {
     return !!currentUser && !!token;
   };
 
-  // Effect to listen for auth state changes
+  // Effect to listen for auth state changes and handle redirect results
   useEffect(() => {
+    const handleRedirectResult = async () => {
+      try {
+        // Check if we're returning from a redirect
+        const result = await getRedirectResult(auth);
+
+        if (result && result.user) {
+          console.log('Detected redirect result on page load');
+
+          // Get Firebase ID token
+          const idToken = await result.user.getIdToken(true);
+
+          // Use the Firebase ID token directly
+          localStorage.setItem('token', idToken);
+          setToken(idToken);
+
+          // Create a user object
+          const user = result.user;
+          const userObj = {
+            uid: user.uid,
+            email: user.email,
+            name: user.displayName || 'Google User',
+            photoURL: user.photoURL,
+            emailVerified: user.emailVerified
+          };
+
+          setCurrentUser(userObj);
+
+          try {
+            // Call backend to register the Google login
+            await authAPI.googleAuth(idToken);
+            toast.success('Logged in with Google successfully!');
+          } catch (backendError) {
+            console.error('Backend Google auth error on redirect:', backendError);
+            toast.success('Logged in with Google (some features may be limited)');
+          }
+        }
+      } catch (error) {
+        console.error('Error handling redirect result:', error);
+      }
+    };
+
+    // Handle redirect result first
+    handleRedirectResult();
+
+    // Then set up the auth state listener
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (user) {
         try {
