@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_URL = 'https://snippy-backend-aupd.onrender.com/api';
+const API_URL = 'https://snippy-backend-1.onrender.com/api';
 
 // Create axios instance
 const api = axios.create({
